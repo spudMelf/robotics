@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+# Local Python environments
+.venv/
+venv/
+myenv/
+
+# macOS and editor artifacts
+.DS_Store
+*.swp

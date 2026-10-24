@@ -1,0 +1,258 @@
+<mujoco>
+    <option gravity="0 0 -9.81" timestep="0.001"/>
+
+    <worldbody>
+        <geom name="floor"
+              type="plane"
+              pos="0 0 -0.18"
+              size="0.4 0.4 0.05"
+              rgba="0.7 0.7 0.7 1"/>
+
+        <!-- Fixed chassis: MuJoCo box size values are half-dimensions,
+             so this is 0.20 m x 0.12 m x 0.04 m overall. -->
+        <body name="chassis" pos="0 0 0">
+            <geom name="chassis_geom"
+                  type="box"
+                  size="0.1 0.06 0.02"/>
+
+            <!-- ========================= -->
+            <!-- FRONT LEFT LEG            -->
+            <!-- ========================= -->
+            <body name="front_left_hip" pos="0.10 0.06 0">
+                <body name="front_left_hip_side_to_side" pos="0 0 0">
+                    <joint name="front_left_theta1"
+                           type="hinge"
+                           axis="1 0 0"/>
+
+                    <geom name="front_left_hip_geom"
+                          type="sphere"
+                          size="0.025"/>
+
+                    <body name="front_left_leg_upper">
+                        <joint name="front_left_theta2"
+                               type="hinge"
+                               axis="0 -1 0"/>
+
+                        <geom name="front_left_upper_geom"
+                              type="capsule"
+                              size="0.02"
+                              fromto="0 0 0 0 0 -0.1"/>
+
+                        <body name="front_left_leg_lower" pos="0 0 -0.1">
+                            <joint name="front_left_theta3"
+                                   type="hinge"
+                                   axis="0 -1 0"/>
+
+                            <geom name="front_left_lower_geom"
+                                  type="capsule"
+                                  size="0.02"
+                                  fromto="0 0 0 0 0 -0.1"/>
+
+                            <site name="front_left_foot"
+                                  pos="0 0 -0.1"
+                                  size="0.008"/>
+                        </body>
+
+                    </body>
+                </body>
+            </body>
+
+            <!-- ========================= -->
+            <!-- FRONT RIGHT LEG           -->
+            <!-- ========================= -->
+            <body name="front_right_hip" pos="0.10 -0.06 0">
+                <body name="front_right_hip_side_to_side" pos="0 0 0">
+                    <joint name="front_right_theta1"
+                           type="hinge"
+                           axis="1 0 0"/>
+
+                    <geom name="front_right_hip_geom"
+                          type="sphere"
+                          size="0.025"/>
+
+                    <body name="front_right_leg_upper">
+                        <joint name="front_right_theta2"
+                               type="hinge"
+                               axis="0 -1 0"/>
+
+                        <geom name="front_right_upper_geom"
+                              type="capsule"
+                              size="0.02"
+                              fromto="0 0 0 0 0 -0.1"/>
+
+                        <body name="front_right_leg_lower" pos="0 0 -0.1">
+                            <joint name="front_right_theta3"
+                                   type="hinge"
+                                   axis="0 -1 0"/>
+
+                            <geom name="front_right_lower_geom"
+                                  type="capsule"
+                                  size="0.02"
+                                  fromto="0 0 0 0 0 -0.1"/>
+
+                            <site name="front_right_foot"
+                                  pos="0 0 -0.1"
+                                  size="0.008"/>
+                        </body>
+
+                    </body>
+                </body>
+            </body>
+
+            <!-- ========================= -->
+            <!-- REAR LEFT LEG             -->
+            <!-- ========================= -->
+            <body name="rear_left_hip" pos="-0.10 0.06 0">
+                <body name="rear_left_hip_side_to_side" pos="0 0 0">
+                    <joint name="rear_left_theta1"
+                           type="hinge"
+                           axis="1 0 0"/>
+
+                    <geom name="rear_left_hip_geom"
+                          type="sphere"
+                          size="0.025"/>
+
+                    <body name="rear_left_leg_upper">
+                        <joint name="rear_left_theta2"
+                               type="hinge"
+                               axis="0 -1 0"/>
+
+                        <geom name="rear_left_upper_geom"
+                              type="capsule"
+                              size="0.02"
+                              fromto="0 0 0 0 0 -0.1"/>
+
+                        <body name="rear_left_leg_lower" pos="0 0 -0.1">
+                            <joint name="rear_left_theta3"
+                                   type="hinge"
+                                   axis="0 -1 0"/>
+
+                            <geom name="rear_left_lower_geom"
+                                  type="capsule"
+                                  size="0.02"
+                                  fromto="0 0 0 0 0 -0.1"/>
+
+                            <site name="rear_left_foot"
+                                  pos="0 0 -0.1"
+                                  size="0.008"/>
+                        </body>
+
+                    </body>
+                </body>
+            </body>
+
+            <!-- ========================= -->
+            <!-- REAR RIGHT LEG            -->
+            <!-- ========================= -->
+            <body name="rear_right_hip" pos="-0.10 -0.06 0">
+                <body name="rear_right_hip_side_to_side" pos="0 0 0">
+                    <joint name="rear_right_theta1"
+                           type="hinge"
+                           axis="1 0 0"/>
+
+                    <geom name="rear_right_hip_geom"
+                          type="sphere"
+                          size="0.025"/>
+
+                    <body name="rear_right_leg_upper">
+                        <joint name="rear_right_theta2"
+                               type="hinge"
+                               axis="0 -1 0"/>
+
+                        <geom name="rear_right_upper_geom"
+                              type="capsule"
+                              size="0.02"
+                              fromto="0 0 0 0 0 -0.1"/>
+
+                        <body name="rear_right_leg_lower" pos="0 0 -0.1">
+                            <joint name="rear_right_theta3"
+                                   type="hinge"
+                                   axis="0 -1 0"/>
+
+                            <geom name="rear_right_lower_geom"
+                                  type="capsule"
+                                  size="0.02"
+                                  fromto="0 0 0 0 0 -0.1"/>
+
+                            <site name="rear_right_foot"
+                                  pos="0 0 -0.1"
+                                  size="0.008"/>
+                        </body>
+
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <!-- Front left -->
+        <motor name="front_left_motor1"
+               joint="front_left_theta1"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+        <motor name="front_left_motor2"
+               joint="front_left_theta2"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+        <motor name="front_left_motor3"
+               joint="front_left_theta3"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+
+        <!-- Front right -->
+        <motor name="front_right_motor1"
+               joint="front_right_theta1"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+        <motor name="front_right_motor2"
+               joint="front_right_theta2"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+        <motor name="front_right_motor3"
+               joint="front_right_theta3"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+
+        <!-- Rear left -->
+        <motor name="rear_left_motor1"
+               joint="rear_left_theta1"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+        <motor name="rear_left_motor2"
+               joint="rear_left_theta2"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+        <motor name="rear_left_motor3"
+               joint="rear_left_theta3"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+
+        <!-- Rear right -->
+        <motor name="rear_right_motor1"
+               joint="rear_right_theta1"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+        <motor name="rear_right_motor2"
+               joint="rear_right_theta2"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+        <motor name="rear_right_motor3"
+               joint="rear_right_theta3"
+               gear="1"
+               ctrllimited="true"
+               ctrlrange="-1 1"/>
+    </actuator>
+</mujoco>
+
