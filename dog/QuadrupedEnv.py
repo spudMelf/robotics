@@ -42,15 +42,16 @@ class QuadrupedConfig:
     min_upright_z: float = 0.5
     fall_penalty: float = 5.0
 
-    # reward weighting
-    rew_vel_scale: float = 4.0
-    rew_alive: float = 0.5
-    pen_upright: float = 2.0
-    pen_lateral_vel: float = 0.3
-    pen_yaw_vel: float = 0.1
-    pen_elec_loss: float = 0.002
-    pen_mech_work: float = 0.002
-    pen_action_smooth: float = 0.05
+    # standing reward weighting
+    w_angles: float = 0.25
+    k_angles: float = 10.0
+    w_tilt: float = 0.55
+    k_tilt: float = 5.0
+    w_still: float = 0.1
+    k_v: float = 1.0
+    k_w: float = 1.0
+    w_joint: float = 0.1
+    k_joint: float = 1.0
 
 
 class QuadrupedEnv(gym.Env):
@@ -157,6 +158,9 @@ class QuadrupedEnv(gym.Env):
         key_id = self.model.key("standing").id
         mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
 
+        for addr in self.joint_qpos_addrs:
+            self.data.qpos[addr] += self.np_random.uniform(-0.05, 0.05)
+
         # forward kinematics to apply update to body
         mujoco.mj_forward(self.model, self.data)
 
@@ -211,14 +215,17 @@ class QuadrupedEnv(gym.Env):
 
         # update kinematics and chassis state
         chassis_xpos = self.data.body("chassis").xpos
-        forward_vel = float(self.data.qvel[self.chassis_qvel_addr + 0])
-        lateral_vel = float(self.data.qvel[self.chassis_qvel_addr + 1])
-        yaw_vel = float(self.data.qvel[self.chassis_qvel_addr + 5])
+        chassis_velocity = self.data.qvel[
+            self.chassis_qvel_addr : self.chassis_qvel_addr + 6
+        ]
+        chassis_linear_velocity = chassis_velocity[:3]
+        chassis_angular_velocity = chassis_velocity[3:]
 
         # clearance above ground
         height = float(chassis_xpos[2]) - self.floor_z
-        # chassis vertical orientation from rotation matrix
-        up_z = float(self.data.body("chassis").xmat[8])
+        chassis_orientation = self.data.body("chassis").xquat
+        _, quat_x, quat_y, _ = chassis_orientation
+        tilt_error = float(quat_x**2 + quat_y**2)
 
         # cost of transport (CoT) telemetry
         distance_traveled = max(1e-4, float(chassis_xpos[0]) - self.initial_x)
@@ -226,37 +233,40 @@ class QuadrupedEnv(gym.Env):
             self.robot_mass * self.cfg.gravity * distance_traveled
         )
 
-        # reward calc logic
-        reward_forward = float(
-            np.exp(-self.cfg.rew_vel_scale * ((forward_vel - self.cfg.target_vel) ** 2))
+        # Standing rewards: pose, uprightness, chassis stillness, and joint stillness.
+        joint_angles = self.data.qpos[self.joint_qpos_addrs]
+        joint_rmse = float(np.sqrt(np.mean((joint_angles - self.nominal_angles) ** 2)))
+        reward_pose = float(np.exp(-self.cfg.k_angles * joint_rmse**2))
+
+        reward_upright = float(np.exp(-self.cfg.k_tilt * tilt_error))
+
+        linear_speed = float(np.linalg.norm(chassis_linear_velocity))
+        angular_speed = float(np.linalg.norm(chassis_angular_velocity))
+        reward_still = float(
+            np.exp(-(self.cfg.k_v * linear_speed + self.cfg.k_w * angular_speed))
         )
-        reward_alive = self.cfg.rew_alive
-        penalty_upright = -self.cfg.pen_upright * max(0.0, 1.0 - up_z)
-        penalty_lateral = (
-            -self.cfg.pen_lateral_vel * abs(lateral_vel)
-            - self.cfg.pen_yaw_vel * abs(yaw_vel)
+
+        joint_velocities = self.data.qvel[self.joint_dof_addrs]
+        joint_velocity_rms = float(np.sqrt(np.mean(joint_velocities**2)))
+        reward_joint_still = float(
+            np.exp(-self.cfg.k_joint * joint_velocity_rms**2)
         )
-        penalty_energy = (
-            -self.cfg.pen_elec_loss * elec_loss
-            - self.cfg.pen_mech_work * mech_work
-        )
-        penalty_smooth = -self.cfg.pen_action_smooth * float(
-            np.sum((action - self.prev_action) ** 2)
-        )
+
         reward = (
-            reward_forward
-            + reward_alive
-            + penalty_upright
-            + penalty_lateral
-            + penalty_energy
-            + penalty_smooth
+            self.cfg.w_angles * reward_pose
+            + self.cfg.w_tilt * reward_upright
+            + self.cfg.w_still * reward_still
+            + self.cfg.w_joint * reward_joint_still
         )
 
         # update last action
         self.prev_action = action.copy()
 
         # termination checks
-        fallen = (height < self.cfg.min_clearance) or (up_z < self.cfg.min_upright_z)
+        fallen = (
+            height < self.cfg.min_clearance
+            or tilt_error > np.sin(np.deg2rad(22.5))**2
+        )
         chassis_collision = self._check_chassis_collision()
         terminated = bool(fallen or chassis_collision)
         if terminated:
@@ -265,10 +275,16 @@ class QuadrupedEnv(gym.Env):
 
         # telemetry
         info = {
-            "forward_vel": forward_vel,
-            "lateral_vel": lateral_vel,
+            "joint_rmse": joint_rmse,
+            "tilt_error": tilt_error,
+            "pose_reward": reward_pose,
+            "upright_reward": reward_upright,
+            "linear_speed": linear_speed,
+            "angular_speed": angular_speed,
+            "still_reward": reward_still,
+            "joint_velocity_rms": joint_velocity_rms,
+            "joint_still_reward": reward_joint_still,
             "height": height,
-            "up_z": up_z,
             "cost_of_transport": float(cost_of_transport),
             "step_energy": float(mech_work),
             "total_energy": float(self.total_energy),
@@ -339,7 +355,8 @@ if __name__ == "__main__":
         total_reward += reward
         print(
             f"Step {step_i + 1:2d} | Height: {info['height']:.3f}m | "
-            f"Fwd Vel: {info['forward_vel']:+.3f}m/s | Up Z: {info['up_z']:.3f} | "
+            f"Linear Speed: {info['linear_speed']:.3f}m/s | "
+            f"Tilt Error: {info['tilt_error']:.5f} | "
             f"Step Energy: {info['step_energy']:.4f}J | Reward: {reward:+.3f}"
         )
     print(f"\nDone. Total reward: {total_reward:.3f}")

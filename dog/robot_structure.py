@@ -56,3 +56,22 @@ ALL_MOTORS = (
 
 L1 = 0.1
 L2 = 0.1
+
+# Nominal standing joint angles (radians)
+STANDING_ANGLES = {
+    "front_left_theta1": 0.0,
+    "front_left_theta2": -0.6167622816246616,
+    "front_left_theta3": 1.337089161190517,
+
+    "front_right_theta1": 0.0,
+    "front_right_theta2": -0.6167622816246616,
+    "front_right_theta3": 1.337089161190517,
+
+    "rear_left_theta1": 0.0,
+    "rear_left_theta2": -0.6037718322490597,
+    "rear_left_theta3": 1.3872085844435758,
+
+    "rear_right_theta1": 0.0,
+    "rear_right_theta2": -0.6037718322490597,
+    "rear_right_theta3": 1.3872085844435758,
+}
