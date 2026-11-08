@@ -1,363 +1,210 @@
-import os
-import sys
-from dataclasses import dataclass, field
-import numpy as np
 import gymnasium as gym
+import robot_structure as rs
+import numpy as np
 import mujoco
-import mujoco.viewer
-
-# chopped import
-try:
-    import robot_structure as rs
-except ImportError:
-    from dog import robot_structure as rs
-
-
-@dataclass
-class QuadrupedConfig:
-    """standardized config and hyperparams for QuadrupedEnv"""
-
-    # sim, control vars
-    substeps: int = 20
-    torque_limit: float = 1.0
-    action_scale: float = 0.25
-    kp: np.ndarray = field(
-        default_factory=lambda: np.array(
-            [5.0, 5.0, 5.0], 
-            dtype=np.float64)
-    )
-    kd: np.ndarray = field(
-        default_factory=lambda: np.array(
-            [0.15, 0.15, 0.15], 
-            dtype=np.float64)
-    )
-
-    # task params
-    target_vel: float = 0.5
-    max_episode_steps: int = 1000
-    gravity: float = 9.81
-
-    # termination thresholds
-    min_clearance: float = 0.08
-    min_upright_z: float = 0.5
-    fall_penalty: float = 5.0
-
-    # standing reward weighting
-    w_angles: float = 0.25
-    k_angles: float = 10.0
-    w_tilt: float = 0.55
-    k_tilt: float = 5.0
-    w_still: float = 0.1
-    k_v: float = 1.0
-    k_w: float = 1.0
-    w_joint: float = 0.1
-    k_joint: float = 1.0
-
 
 class QuadrupedEnv(gym.Env):
-    """
-    gymnasium env for 12-dim of freedom (dof) quad-leg robot dog,
-    MuJoCo simulated.
-    """
 
-    metadata = {
-        "render_modes": ["human", "rgb_array"],
-        "render_fps": 50,
-    }
-
-    def __init__(
-        self,
-        model_xml=None,
-        render_mode=None,
-        config: QuadrupedConfig = None,
-    ):
+    def __init__(self, model_xml):
         super().__init__()
-        self.cfg = config if config is not None else QuadrupedConfig()
-
-        # model pathing
-        if model_xml is None:
-            model_xml = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dog.xml")
-        elif not os.path.isabs(model_xml) and not os.path.exists(model_xml):
-            model_xml = os.path.join(os.path.dirname(os.path.abspath(__file__)), model_xml)
-        self.model_xml = model_xml
-
-        self.render_mode = render_mode
-        self.viewer = None
-
-        self.model = mujoco.MjModel.from_xml_path(self.model_xml)
+        # Load our MuJoCo model
+        self.model = mujoco.MjModel.from_xml_path(model_xml)
         self.data = mujoco.MjData(self.model)
 
-        # ids and addresses for chassis and floor
-        self.joint_names = np.array(rs.ALL_JOINTS).flatten()
-        self.motor_names = np.array(rs.ALL_MOTORS).flatten()
-        self.num_actions = len(self.motor_names)
+        # PD Controller Constants
+        self.kp = np.array([5.0, 5.0, 5.0])
+        self.kd = np.array([0.15, 0.15, 0.15])
 
-        self.joint_qpos_addrs = [
-            self.model.jnt_qposadr[self.model.joint(name).id] for name in self.joint_names
-        ]
-        self.joint_dof_addrs = [
-            self.model.jnt_dofadr[self.model.joint(name).id] for name in self.joint_names
-        ]
-        self.motor_actuator_ids = [
-            self.model.actuator(name).id for name in self.motor_names
-        ]
+        # Reward function constants
+        self.w_angles = 0.25
+        self.k_angles = 10
 
-        self.chassis_body_id = self.model.body("chassis").id
-        self.chassis_free_id = self.model.joint("chassis_free").id
-        self.chassis_qpos_addr = self.model.jnt_qposadr[self.chassis_free_id]
-        self.chassis_qvel_addr = self.model.jnt_dofadr[self.chassis_free_id]
-        self.chassis_geom_id = self.model.geom("chassis_geom").id
-        self.floor_geom_id = self.model.geom("floor").id
+        self.w_tilt = 0.55
+        self.k_tilt = 5
 
-        # contact points for ground
-        self.foot_sites = [
-            "front_left_foot",
-            "front_right_foot",
-            "rear_left_foot",
-            "rear_right_foot",
-        ]
+        self.k_v = 1
+        self.k_w = 1
+        self.w_still = 0.1
 
-        # simulation run counters and tracking
-        self.step_count = 0
-        self.total_energy = 0.0
-        self.initial_x = 0.0
-        self.prev_action = np.zeros(self.num_actions, dtype=np.float32)
+        self.k_joint = 1
+        self.w_joint = 0.1
 
-        # physics props
-        self.robot_mass = float(np.sum(self.model.body_mass)) #TODO: refine within dog.xml closer to our real-world components
-        self.floor_z = float(self.model.geom("floor").pos[2])
-        self.nominal_angles = np.array(
-            [self.model.key("standing").qpos[addr] for addr in self.joint_qpos_addrs],
-            dtype=np.float64,
-        )
-
-        # bounding boxes around the desired angles 
+        # Define action and observation spaces
         self.action_space = gym.spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(self.num_actions,),
-            dtype=np.float32,
+            shape=(12,),
+            dtype=np.float32
         )
 
         self.observation_space = gym.spaces.Box(
             low=-np.inf,
             high=np.inf,
             shape=(34,),
-            dtype=np.float32,
+            dtype=np.float32
         )
 
+        self.action_scale = 0.25
+
+        self.joint_names = np.array(rs.ALL_JOINTS).flatten()
+        self.motor_names = np.array(rs.ALL_MOTORS).flatten()
+
+        self.standing_angles = np.array([
+            rs.STANDING_ANGLES[name]
+            for name in self.joint_names
+        ])
+
     def reset(self, seed=None, options=None):
-        """resets sim to standing pose"""
-
-        # reset stats
+        # Reset robot pose and velocities
         super().reset(seed=seed)
-        self.step_count = 0
-        self.total_energy = 0.0
-
-        # reset robot to standing keyframe
         key_id = self.model.key("standing").id
         mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
+        for name in self.joint_names:
+            joint_id = self.model.joint(name).id
+            addr = self.model.jnt_qposadr[joint_id]
 
-        for addr in self.joint_qpos_addrs:
-            self.data.qpos[addr] += self.np_random.uniform(-0.05, 0.05)
-
-        # forward kinematics to apply update to body
+            self.data.qpos[addr] += self.np_random.uniform(
+                -0.05, 0.05
+            )
         mujoco.mj_forward(self.model, self.data)
 
-        # reset initial pos
-        self.initial_x = float(self.data.body("chassis").xpos[0])
-        self.prev_action = np.zeros(self.num_actions, dtype=np.float32)
-
-        if self.render_mode == "human":
-            self.render()
-
+        # Return initial observation and info
         return self._get_obs(), {}
 
     def step(self, action):
-        """
-        per control step:
-        1. translates action offsets into desired joint angles around nominal pose.
-        2. advances physics using PD torque control.
-        3. computes reward and energy/efficiency metrics.
-        4. checks termination+truncation conditions.
-        """
-        self.step_count += 1
-        action = np.clip(action, self.action_space.low, self.action_space.high)
+        # Apply motor commands using PD control
+        # Step MuJoCo physics
+        # Measure foot position and chassis state
+        # Calculate reward
+        # Check for termination
 
-        desired_angles = self.nominal_angles + (self.cfg.action_scale * action)
+        # Apply motor command and step physics
+        current_angles = np.array([
+            self.data.qpos[self.model.jnt_qposadr[self.model.joint(name).id]]
+            for name in self.joint_names
+        ])
+        # theta_desired = theta_standing + scale * action
+        desired_angles = self.standing_angles + self.action_scale * action
 
-        elec_loss = 0.0
-        mech_work = 0.0
+        for _ in range(20):
+            for i in range(len(self.joint_names)):
+                joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, self.joint_names[i])
 
-        # physics loop substep times
-        for _ in range(self.cfg.substeps):
-            for i in range(self.num_actions):
-                q = self.data.qpos[self.joint_qpos_addrs[i]]
-                dq = self.data.qvel[self.joint_dof_addrs[i]]
+                # get current angle position
+                qpos_address = self.model.jnt_qposadr[joint_id]
+                angle = self.data.qpos[qpos_address]
 
-                # pd control law: tau = Kp*(q* - q) - Kd*dq
-                gain_idx = i % 3
-                torque = (self.cfg.kp[gain_idx] * (desired_angles[i] - q)) - (
-                    self.cfg.kd[gain_idx] * dq
-                )
-                torque = float(
-                    np.clip(torque, -self.cfg.torque_limit, self.cfg.torque_limit)
-                )
+                # get current angular velocity
+                qvel_address = self.model.jnt_dofadr[joint_id]
+                vel = self.data.qvel[qvel_address]
 
-                self.data.ctrl[self.motor_actuator_ids[i]] = torque
+                # our desired velocity is 0, because we are trying to reach that point and stop
+                torque = (self.kp[i % 3] * (desired_angles[i] - angle)) - (self.kd[i % 3] * vel)
 
-                elec_loss += (torque ** 2) * self.model.opt.timestep
-                mech_work += abs(torque * dq) * self.model.opt.timestep
-
+                self.data.actuator(self.motor_names[i]).ctrl[0] = torque
             mujoco.mj_step(self.model, self.data)
 
-        self.total_energy += mech_work
+        # Measure foot position and chassis state
+        FL_pos = self.data.site("front_left_foot").xpos.copy()
+        FR_pos = self.data.site("front_right_foot").xpos.copy()
+        RL_pos = self.data.site("rear_left_foot").xpos.copy()
+        RR_pos = self.data.site("rear_right_foot").xpos.copy()
 
-        # update kinematics and chassis state
-        chassis_xpos = self.data.body("chassis").xpos
-        chassis_velocity = self.data.qvel[
-            self.chassis_qvel_addr : self.chassis_qvel_addr + 6
-        ]
-        chassis_linear_velocity = chassis_velocity[:3]
-        chassis_angular_velocity = chassis_velocity[3:]
+        chassis_pos = self.data.body("chassis").xpos.copy()
+        chassis_orientation = self.data.body("chassis").xquat.copy()
 
-        # clearance above ground
-        height = float(chassis_xpos[2]) - self.floor_z
-        chassis_orientation = self.data.body("chassis").xquat
-        _, quat_x, quat_y, _ = chassis_orientation
-        tilt_error = float(quat_x**2 + quat_y**2)
+        chassis_id = self.model.body("chassis").id
+        velocity = np.zeros(6)
+        mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_XBODY,chassis_id, velocity, 0)
 
-        # cost of transport (CoT) telemetry
-        distance_traveled = max(1e-4, float(chassis_xpos[0]) - self.initial_x)
-        cost_of_transport = self.total_energy / (
-            self.robot_mass * self.cfg.gravity * distance_traveled
-        )
+        chassis_angular_velocity = velocity[:3]
+        chassis_linear_velocity = velocity[3:]
 
-        # Standing rewards: pose, uprightness, chassis stillness, and joint stillness.
-        joint_angles = self.data.qpos[self.joint_qpos_addrs]
-        joint_rmse = float(np.sqrt(np.mean((joint_angles - self.nominal_angles) ** 2)))
-        reward_pose = float(np.exp(-self.cfg.k_angles * joint_rmse**2))
+        # calculate reward
+        # angles
+        joint_angles = np.array([
+            self.data.qpos[
+                self.model.jnt_qposadr[self.model.joint(name).id]
+            ]
+            for name in self.joint_names
+        ])
+        joints_rmse = np.sqrt(np.mean(
+            (joint_angles - self.standing_angles)**2
+        ))
+        reward_pose = np.exp(-self.k_angles * joints_rmse * joints_rmse)
 
-        reward_upright = float(np.exp(-self.cfg.k_tilt * tilt_error))
+        # pose
+        w, x, y, z = chassis_orientation
+        tilt_error = x**2 + y**2
+        reward_upright = np.exp(-self.k_tilt * tilt_error)
 
-        linear_speed = float(np.linalg.norm(chassis_linear_velocity))
-        angular_speed = float(np.linalg.norm(chassis_angular_velocity))
-        reward_still = float(
-            np.exp(-(self.cfg.k_v * linear_speed + self.cfg.k_w * angular_speed))
-        )
+        # velocities
+        v_x, v_y, v_z = chassis_linear_velocity
+        w_x, w_y, w_z = chassis_angular_velocity
+        v_error = np.sqrt((v_x * v_x) + (v_y * v_y) + (v_z * v_z))
+        w_error = np.sqrt((w_x * w_x) + (w_y * w_y) + (w_z * w_z))
+        reward_still = np.exp(-(self.k_v * v_error + self.k_w * w_error))
 
-        joint_velocities = self.data.qvel[self.joint_dof_addrs]
-        joint_velocity_rms = float(np.sqrt(np.mean(joint_velocities**2)))
-        reward_joint_still = float(
-            np.exp(-self.cfg.k_joint * joint_velocity_rms**2)
+        # Joint stillness: penalize RMS velocity across all 12 actuated joints.
+        joint_velocities = np.array([
+            self.data.qvel[
+                self.model.jnt_dofadr[self.model.joint(name).id]
+            ]
+            for name in self.joint_names
+        ])
+        joint_velocity_rms = np.sqrt(np.mean(joint_velocities**2))
+        reward_joint_still = np.exp(
+            -self.k_joint * joint_velocity_rms**2
         )
 
         reward = (
-            self.cfg.w_angles * reward_pose
-            + self.cfg.w_tilt * reward_upright
-            + self.cfg.w_still * reward_still
-            + self.cfg.w_joint * reward_joint_still
+            self.w_angles * reward_pose
+            + self.w_tilt * reward_upright
+            + self.w_still * reward_still
+            + self.w_joint * reward_joint_still
         )
 
-        # update last action
-        self.prev_action = action.copy()
+        # temporary
+        floor_z = self.data.geom("floor").xpos[2]
+        chassis_height = chassis_pos[2] - floor_z
 
-        # termination checks
-        fallen = (
-            height < self.cfg.min_clearance
+        # End episode if robot falls or tilts excessively
+        terminated = bool(
+            chassis_height < 0.08
             or tilt_error > np.sin(np.deg2rad(22.5))**2
         )
-        chassis_collision = self._check_chassis_collision()
-        terminated = bool(fallen or chassis_collision)
-        if terminated:
-            reward -= self.cfg.fall_penalty
-        truncated = bool(self.step_count >= self.cfg.max_episode_steps)
 
-        # telemetry
+        truncated = False
         info = {
-            "joint_rmse": joint_rmse,
+            "joint_rmse": joints_rmse,
             "tilt_error": tilt_error,
             "pose_reward": reward_pose,
             "upright_reward": reward_upright,
-            "linear_speed": linear_speed,
-            "angular_speed": angular_speed,
+            "linear_speed": v_error,
+            "angular_speed": w_error,
             "still_reward": reward_still,
             "joint_velocity_rms": joint_velocity_rms,
             "joint_still_reward": reward_joint_still,
-            "height": height,
-            "cost_of_transport": float(cost_of_transport),
-            "step_energy": float(mech_work),
-            "total_energy": float(self.total_energy),
-            "step_count": self.step_count,
         }
 
-        if self.render_mode == "human":
-            self.render()
-
-        return self._get_obs(), float(reward), terminated, truncated, info
+        return self._get_obs(), reward, terminated, truncated, info
 
     def _get_obs(self):
-        """ builds observation vector """
         obs = []
+        for joint in self.joint_names:
+            joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint)
+            qpos_address = self.model.jnt_qposadr[joint_id]
+            joint_angle = self.data.qpos[qpos_address]
+            obs.append(joint_angle)
 
-        for addr in self.joint_qpos_addrs:
-            obs.append(self.data.qpos[addr])
-        for addr in self.joint_dof_addrs:
-            obs.append(self.data.qvel[addr])
+        for joint in self.joint_names:
+            joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint)
+            qvel_address = self.model.jnt_dofadr[joint_id]
+            joint_vel = self.data.qvel[qvel_address]
+            obs.append(joint_vel)
 
-        obs = np.array(obs, dtype=np.float32)
+        obs = np.array(obs)
+        obs = np.concatenate((obs, self.data.body("chassis").xquat))
+        obs = np.concatenate((obs, self.data.joint("chassis_free").qvel))
 
-        # orientation
-        chassis_quat = np.array(self.data.body("chassis").xquat, dtype=np.float32)
-        # velocity
-        chassis_vel = np.array(
-            self.data.qvel[self.chassis_qvel_addr : self.chassis_qvel_addr + 6],
-            dtype=np.float32,
-        )
-
-        return np.concatenate([obs, chassis_quat, chassis_vel], dtype=np.float32)
-
-    def _check_chassis_collision(self):
-        """ is robot main chassis contacting floor?"""
-        for i in range(self.data.ncon):
-            contact = self.data.contact[i]
-            if (contact.geom1 == self.chassis_geom_id and contact.geom2 == self.floor_geom_id) or \
-               (contact.geom2 == self.chassis_geom_id and contact.geom1 == self.floor_geom_id):
-                return True
-        return False
-
-    def render(self):
-        """ renders in the "human" MuJoCo viewer."""
-        if self.render_mode == "human":
-            if self.viewer is None:
-                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
-            self.viewer.sync()
-
-    def close(self):
-        """ cleans up render loop """
-        if self.viewer is not None:
-            self.viewer.close()
-            self.viewer = None
-
-
-if __name__ == "__main__":
-    print("Initializing QuadrupedEnv")
-    env = QuadrupedEnv()
-    obs, _ = env.reset()
-    print("Observation shape:", obs.shape)
-    print("Observation space:", env.observation_space.contains(obs))
-
-    print("\Test run: 10 steps, 0 actions")
-    total_reward = 0.0
-    for step_i in range(10):
-        action = np.zeros(12, dtype=np.float32)
-        obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-        print(
-            f"Step {step_i + 1:2d} | Height: {info['height']:.3f}m | "
-            f"Linear Speed: {info['linear_speed']:.3f}m/s | "
-            f"Tilt Error: {info['tilt_error']:.5f} | "
-            f"Step Energy: {info['step_energy']:.4f}J | Reward: {reward:+.3f}"
-        )
-    print(f"\nDone. Total reward: {total_reward:.3f}")
-    env.close()
+        return np.array(obs, dtype=np.float32)
