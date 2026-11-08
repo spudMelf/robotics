@@ -46,6 +46,17 @@ class QuadrupedEnv(gym.Env):
 
         self.action_scale = 0.25
 
+        # Energy penalty: discourages high motor torques (proxy for heat/power draw).
+        # Accumulated as sum(tau_i^2 * dt) over all joints and substeps.
+        self.w_energy = 0.002
+
+        # Action-rate smoothness penalty: discourages large joint-angle changes
+        # between consecutive policy steps, suppressing high-frequency jitter.
+        self.w_smooth = 0.02
+
+        # Tracks the previous action for the smoothness penalty calculation.
+        self.prev_action = np.zeros(12, dtype=np.float32)
+
         self.joint_names = np.array(rs.ALL_JOINTS).flatten()
         self.motor_names = np.array(rs.ALL_MOTORS).flatten()
 
@@ -68,6 +79,9 @@ class QuadrupedEnv(gym.Env):
             )
         mujoco.mj_forward(self.model, self.data)
 
+        # Reset smoothness tracking so the first step has no spurious penalty.
+        self.prev_action = np.zeros(12, dtype=np.float32)
+
         # Return initial observation and info
         return self._get_obs(), {}
 
@@ -86,6 +100,7 @@ class QuadrupedEnv(gym.Env):
         # theta_desired = theta_standing + scale * action
         desired_angles = self.standing_angles + self.action_scale * action
 
+        energy_accum = 0.0  # sum(tau_i^2 * dt) across all joints and substeps
         for _ in range(20):
             for i in range(len(self.joint_names)):
                 joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, self.joint_names[i])
@@ -100,6 +115,9 @@ class QuadrupedEnv(gym.Env):
 
                 # our desired velocity is 0, because we are trying to reach that point and stop
                 torque = (self.kp[i % 3] * (desired_angles[i] - angle)) - (self.kd[i % 3] * vel)
+
+                # Accumulate electrical energy proxy (torque^2 * dt) for the penalty.
+                energy_accum += torque ** 2 * self.model.opt.timestep
 
                 self.data.actuator(self.motor_names[i]).ctrl[0] = torque
             mujoco.mj_step(self.model, self.data)
@@ -157,12 +175,24 @@ class QuadrupedEnv(gym.Env):
             -self.k_joint * joint_velocity_rms**2
         )
 
+        # Energy penalty: high torques waste power and damage motors.
+        reward_energy = self.w_energy * energy_accum
+
+        # Action-rate smoothness penalty: large jumps between consecutive actions
+        # cause physical jitter and mechanical wear.
+        reward_smooth = self.w_smooth * np.sum((action - self.prev_action) ** 2)
+
         reward = (
             self.w_angles * reward_pose
             + self.w_tilt * reward_upright
             + self.w_still * reward_still
             + self.w_joint * reward_joint_still
+            - reward_energy
+            - reward_smooth
         )
+
+        # Record action for next step's smoothness calculation.
+        self.prev_action = action.copy()
 
         # temporary
         floor_z = self.data.geom("floor").xpos[2]
@@ -185,6 +215,10 @@ class QuadrupedEnv(gym.Env):
             "still_reward": reward_still,
             "joint_velocity_rms": joint_velocity_rms,
             "joint_still_reward": reward_joint_still,
+            "energy_accum": energy_accum,
+            "energy_penalty": reward_energy,
+            "action_delta_sq": float(np.sum((action - self.prev_action) ** 2)),
+            "smooth_penalty": reward_smooth,
         }
 
         return self._get_obs(), reward, terminated, truncated, info

@@ -1,13 +1,18 @@
 
+import os
 import time
 import numpy as np
 import mujoco.viewer
 from stable_baselines3 import PPO
 from QuadrupedEnv import QuadrupedEnv
 
+script_dir = os.path.dirname(os.path.abspath(__file__))
+model_xml = os.path.join(script_dir, "dog.xml")
+model_path = os.path.join(script_dir, "standing_policy_v3")
+
 # Load environment and trained policy
-env = QuadrupedEnv("dog.xml")
-model = PPO.load("standing_policy_v3")
+env = QuadrupedEnv(model_xml)
+model = PPO.load(model_path)
 
 obs, info = env.reset()
 

@@ -1,3 +1,4 @@
+import os
 import time
 import sys
 import numpy as np
@@ -13,7 +14,8 @@ import robot_structure as robot
 kp = np.array([5.0, 5.0, 5.0])
 kd = np.array([0.15, 0.15, 0.15])
 
-model = mujoco.MjModel.from_xml_path("dog.xml")
+xml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dog.xml")
+model = mujoco.MjModel.from_xml_path(xml_path)
 data = mujoco.MjData(model)
 
 T_up = 2
